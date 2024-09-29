@@ -1,0 +1,3 @@
+[submodule "claws-mail"]
+	path = claws-mail
+	url = https://src.fedoraproject.org/rpms/claws-mail.git

@@ -1,0 +1,179 @@
+diff --git a/0001-Notify-on-unread-messages-also-in-the-systray.patch b/0001-Notify-on-unread-messages-also-in-the-systray.patch
+new file mode 100644
+index 0000000..d77667b
+--- /dev/null
++++ b/0001-Notify-on-unread-messages-also-in-the-systray.patch
+@@ -0,0 +1,134 @@
++From 53a4d01a8ed8e74371e1513853b0d0c05f39dd46 Mon Sep 17 00:00:00 2001
++Message-Id: <53a4d01a8ed8e74371e1513853b0d0c05f39dd46.1666607168.git.lukasz.wojnilowicz@gmail.com>
++From: =?UTF-8?q?=C5=81ukasz=20Wojni=C5=82owicz?=
++ <lukasz.wojnilowicz@gmail.com>
++Date: Mon, 24 Oct 2022 12:26:00 +0200
++Subject: [PATCH] Notify on unread messages also in the systray
++
++Credits to: Anton Butanaev <anton.butanaev@ya.ru>
++Credits to: Romain Guinot <romainguinot@gmail.com>
++---
++ src/plugins/notification/notification_core.c  | 11 ++++++-----
++ src/plugins/notification/notification_popup.c |  3 +++
++ src/plugins/notification/notification_prefs.c | 15 +++++++++++++++
++ src/plugins/notification/notification_prefs.h |  1 +
++ 4 files changed, 25 insertions(+), 5 deletions(-)
++
++diff --git a/src/plugins/notification/notification_core.c b/src/plugins/notification/notification_core.c
++index 3751fd366..8dde57f2e 100644
++--- a/src/plugins/notification/notification_core.c
+++++ b/src/plugins/notification/notification_core.c
++@@ -297,7 +297,8 @@ gboolean notification_notified_hash_msginfo_update(MsgInfoUpdate *msg_update)
++   g_return_val_if_fail(msg_update != NULL, FALSE);
++ 
++   if((msg_update->flags & MSGINFO_UPDATE_FLAGS) &&
++-     !MSG_IS_NEW(msg_update->msginfo->flags)) {
+++     !MSG_IS_NEW(msg_update->msginfo->flags) &&
+++     !MSG_IS_UNREAD(msg_update->msginfo->flags)) {
++ 
++     MsgInfo *msg;
++     gchar *msgid;
++@@ -351,15 +352,15 @@ static gboolean notification_traverse_hash_startup(GNode *node, gpointer data)
++   FolderItem *item = (FolderItem*) node->data;
++   gint new_msgs_left;
++ 
++-  if(!(item->new_msgs))
+++  if(!(item->new_msgs + item->unread_msgs))
++     return FALSE;
++ 
++-  new_msgs_left = item->new_msgs;
+++  new_msgs_left = item->new_msgs + item->unread_msgs;
++   msg_list = folder_item_get_msg_list(item);
++ 
++   for(walk = msg_list; walk; walk = g_slist_next(walk)) {
++     MsgInfo *msg = (MsgInfo*) walk->data;
++-    if(MSG_IS_NEW(msg->flags)) {
+++    if(MSG_IS_NEW(msg->flags) || MSG_IS_UNREAD(msg->flags)) {
++       gchar *msgid;
++ 
++       if(msg->msgid)
++@@ -409,7 +410,7 @@ void notification_new_unnotified_msgs(FolderItemUpdateData *update_data)
++     MsgInfo *msg;
++     msg = (MsgInfo*) walk->data;
++ 
++-    if(MSG_IS_NEW(msg->flags)) {
+++    if(MSG_IS_NEW(msg->flags) || MSG_IS_UNREAD(msg->flags)) {
++       gchar *msgid;
++ 
++       if(msg->msgid)
++diff --git a/src/plugins/notification/notification_popup.c b/src/plugins/notification/notification_popup.c
++index 507b7c6a7..2238ec420 100644
++--- a/src/plugins/notification/notification_popup.c
+++++ b/src/plugins/notification/notification_popup.c
++@@ -106,6 +106,9 @@ void notification_popup_msg(MsgInfo *msginfo)
++   if(!msginfo || !notify_config.popup_show)
++     return;
++ 
+++  if(!notify_config.popup_unread_also && !MSG_IS_NEW(msginfo->flags))
+++    return;
+++
++   if(notify_config.popup_folder_specific) {
++     guint id;
++     GSList *list;
++diff --git a/src/plugins/notification/notification_prefs.c b/src/plugins/notification/notification_prefs.c
++index 172a41bed..c62b18f59 100644
++--- a/src/plugins/notification/notification_prefs.c
+++++ b/src/plugins/notification/notification_prefs.c
++@@ -116,6 +116,7 @@ typedef struct {
++ 	GtkWidget *popup_cont_color_sel;
++ #else /* HAVE_LIBNOTIFY */
++ 	GtkWidget *popup_display_folder_name;
+++	GtkWidget *popup_unread_also;
++ #endif /* HAVE_LIBNOTIFY */
++ }NotifyPopupPage;
++ NotifyPopupPage popup_page;
++@@ -256,6 +257,8 @@ PrefParam
++ #else /* HAVE_LIBNOTIFY */
++ 				{	"popup_display_folder_name", "FALSE", &notify_config.popup_display_folder_name,
++ 					P_BOOL, NULL, NULL, NULL},
+++				{	"popup_unread_also", "FALSE", &notify_config.popup_unread_also,
+++					P_BOOL, NULL, NULL, NULL},
++ #endif /* HAVE_LIBNOTIFY */
++ #endif
++ 
++@@ -1162,6 +1165,15 @@ static void notify_create_popup_page(PrefsPage *page, GtkWindow *window,
++ 	gtk_widget_show(checkbox);
++ 	gtk_widget_show(hbox);
++ 	popup_page.popup_display_folder_name = checkbox;
+++	hbox = gtk_hbox_new(FALSE, 10);
+++	gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 0);
+++	checkbox = gtk_check_button_new_with_label(_("Notify on unread also"));
+++	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(checkbox),
+++			notify_config.popup_unread_also);
+++	gtk_box_pack_start(GTK_BOX(hbox), checkbox, FALSE, FALSE, 0);
+++	gtk_widget_show(checkbox);
+++	gtk_widget_show(hbox);
+++	popup_page.popup_unread_also = checkbox;
++ #endif /* HAVE_LIBNOTIFY */
++ 
++ 	notify_popup_enable_set_sensitivity
++@@ -1204,6 +1216,9 @@ static void notify_save_popup(PrefsPage *page)
++ #else /* HAVE_LIBNOTIFY */
++ 	notify_config.popup_display_folder_name =
++ 	gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(popup_page.popup_display_folder_name));
+++
+++	notify_config.popup_unread_also =
+++	gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(popup_page.popup_unread_also));
++ #endif /* HAVE_LIBNOTIFY */
++ }
++ 
++diff --git a/src/plugins/notification/notification_prefs.h b/src/plugins/notification/notification_prefs.h
++index a80e39b1b..6947bbf2d 100644
++--- a/src/plugins/notification/notification_prefs.h
+++++ b/src/plugins/notification/notification_prefs.h
++@@ -74,6 +74,7 @@ typedef struct {
++   GdkRGBA          popup_color_fg;
++ #else /* HAVE_LIBNOTIFY */
++   gboolean         popup_display_folder_name;
+++  gboolean         popup_unread_also;
++ #endif /* HAVE_LIBNOTIFY */
++ #endif /* Popup */
++ #ifdef NOTIFICATION_COMMAND
++-- 
++2.37.3
++
+diff --git a/claws-mail.spec b/claws-mail.spec
+index 35628d8..fd21be7 100644
+--- a/claws-mail.spec
++++ b/claws-mail.spec
+@@ -4,7 +4,7 @@
+ # Gtk-WARNING **: xx:xx:xx.xxx: GtkSocket: only works under X11
+ # Gdk-WARNING **: xx:xx:xx.xxx: gdkwindow-x11.c:5653 drawable is not a native X11 window
+ # Segmentation fault (core dumped)
+-%global with_dillo 0
++%global with_dillo 1
+ # added 20210720
+ Obsoletes: claws-mail-plugins-dillo < 4.0.0-1
+ 
+@@ -26,7 +26,7 @@ Obsoletes: claws-mail-plugin-gdata < 4.2.0-1
+ 
+ Name:           claws-mail
+ Version:        4.3.0
+-Release:        6%{?dist}
++Release:        7%{?dist}
+ Summary:        Email client and news reader based on GTK+
+ # Automatically converted from old format: GPLv3+ - review is highly recommended.
+ License:        GPL-3.0-or-later
+@@ -35,6 +35,7 @@ Source0:        https://claws-mail.org/releases/%{name}-%{version}.tar.xz
+ 
+ # rhbz#1179279
+ Patch11:        claws-mail-system-crypto-policies.patch
++Patch12:        0001-Notify-on-unread-messages-also-in-the-systray.patch
+ 
+ BuildRequires:  gcc, flex, bison, make
+ BuildRequires:  pkgconfig(glib-2.0) >= 2.20
+@@ -425,6 +426,8 @@ exporting of your meetings or all your calendars.
+ %patch 11 -p1 -b.syscrypto
+ %endif
+ 
++%patch 12 -p1
++
+ # guard for pluginapi
+ SOURCEAPI=$(grep -A 1 VERSION_NUMERIC src/common/version.h | tr -d '\n' | perl -ne 's/[\\\s]//g; m/(\d+),(\d+),(\d+),(\d+)/; print("$1.$2.$3.$4");')
+ [ "%pluginapi" == "$SOURCEAPI" ] || exit -1
